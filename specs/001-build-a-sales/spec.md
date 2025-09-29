@@ -65,6 +65,7 @@ A sales representative signs in, views the account dashboard, filters to their a
 
 ### Edge Cases
 - How should the system respond if an account status transition violates business rules (e.g., skipping required intermediate stages)?
+- When users attempt to change status outside the linear pipeline order, the system MUST reject the action and indicate the next valid stage.
 - What happens when multiple users attempt to update the same account simultaneously?
 - How is access handled for users assigned to no accounts or when filters return zero results?
 - What is the expected behavior if audit trail generation exceeds a preset size limit or times out?
@@ -83,9 +84,9 @@ A sales representative signs in, views the account dashboard, filters to their a
 - **FR-008**: The platform MUST log all access and data modification events for monitoring and compliance reporting.
 - **FR-009**: The system MUST support soft deletion of accounts and history entries so they are excluded from standard views while remaining retrievable for compliance.
 - **FR-010**: The application MUST enforce rate limits on API interactions to protect backend resources.
+- **FR-011**: The system MUST enforce a linear account status pipeline (Lead → Qualified → Proposal → Negotiation → Closed Won/Lost) with no forward skipping or backward jumps; invalid requests MUST be rejected with descriptive validation errors.
 
 *Ambiguities identified:*
-- **FR-011**: The system MUST define account status transition rules, including required intermediate stages and approval steps. [NEEDS CLARIFICATION: Provide the full status transition matrix and approval criteria.]
 - **FR-012**: Audit trail exports MUST support user-selected date ranges and limits. [NEEDS CLARIFICATION: Specify maximum export window and file size constraints.]
 
 ### Key Entities *(include if feature involves data)*
@@ -126,6 +127,11 @@ A sales representative signs in, views the account dashboard, filters to their a
 - [ ] Review checklist passed
 
 ---
+
+## Clarifications
+
+### Session 2025-09-29
+- Q: Which status transition policy should the application enforce for accounts? → A: Linear pipeline: Lead → Qualified → Proposal → Negotiation → Closed (Won/Lost) with no skipping
 # Feature Specification: [FEATURE NAME]
 
 **Feature Branch**: `[###-feature-name]`  
