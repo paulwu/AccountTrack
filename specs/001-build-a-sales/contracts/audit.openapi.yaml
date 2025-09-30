@@ -1,0 +1,146 @@
+openapi: 3.1.0
+info:
+  title: Sales Account Audit Export API
+  version: 0.1.0
+  description: Endpoints for initiating and tracking audit trail exports.
+servers:
+  - url: https://{environment}.api.salesaccounts.contoso.com
+    variables:
+      environment:
+        default: dev
+        enum: [dev, qa, prod]
+components:
+  securitySchemes:
+    azureAd:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/authorize
+          tokenUrl: https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token
+          scopes:
+            api://sales-accounts/.default: Access Sales Account APIs
+  schemas:
+    ExportRequest:
+      type: object
+      required: [rangeStart, rangeEnd]
+      properties:
+        rangeStart:
+          type: string
+          format: date-time
+        rangeEnd:
+          type: string
+          format: date-time
+        format:
+          type: string
+          enum: [csv, pdf, both]
+          default: both
+    ExportJob:
+      type: object
+      required: [id, accountId, requestedBy, requestedAt, rangeStart, rangeEnd, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        accountId:
+          type: string
+        requestedBy:
+          type: string
+        requestedAt:
+          type: string
+          format: date-time
+        rangeStart:
+          type: string
+          format: date-time
+        rangeEnd:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [Pending, Processing, Completed, Failed, Queued]
+        downloadUrls:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+                enum: [csv, pdf]
+              url:
+                type: string
+                format: uri
+              expiresAt:
+                type: string
+                format: date-time
+        fileSizeBytes:
+          type: number
+        errorDetails:
+          type: string
+          nullable: true
+    ExportQueuedResponse:
+      type: object
+      required: [job]
+      properties:
+        job:
+          $ref: '#/components/schemas/ExportJob'
+        message:
+          type: string
+
+paths:
+  /accounts/{accountId}/audit-exports:
+    post:
+      summary: Request an audit trail export for an account
+      description: Enforces 12-month window and 10 MB size cap.
+      security:
+        - azureAd: []
+      parameters:
+        - in: path
+          name: accountId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExportRequest'
+      responses:
+        '202':
+          description: Export accepted and will run in background.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportQueuedResponse'
+        '400':
+          description: Validation error (range too large, overlapping request)
+        '403':
+          description: User lacks permission to export this account
+        '409':
+          description: Existing export already in progress
+  /accounts/{accountId}/audit-exports/{exportId}:
+    get:
+      summary: Get export job status and download links
+      security:
+        - azureAd: []
+      parameters:
+        - in: path
+          name: accountId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: exportId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Export status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportJob'
+        '404':
+          description: Export job not found or expired
+        '410':
+          description: Export expired; user must request again

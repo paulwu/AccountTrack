@@ -1,0 +1,359 @@
+openapi: 3.1.0
+info:
+  title: Sales Account API
+  version: 0.1.0
+  description: REST API for managing sales accounts, history, and status transitions.
+servers:
+  - url: https://{environment}.api.salesaccounts.contoso.com
+    variables:
+      environment:
+        default: dev
+        enum: [dev, qa, prod]
+components:
+  securitySchemes:
+    azureAd:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/authorize
+          tokenUrl: https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token
+          scopes:
+            api://sales-accounts/.default: Access Sales Account APIs
+  schemas:
+    AccountSummary:
+      type: object
+      required: [accountId, name, status, ownerId, ownerName, region, annualRecurringRevenue, lastTouch]
+      properties:
+        accountId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        status:
+          type: string
+          enum: [Lead, Qualified, Proposal, Negotiation, ClosedWon, ClosedLost]
+        statusSince:
+          type: string
+          format: date-time
+        ownerId:
+          type: string
+        ownerName:
+          type: string
+        region:
+          type: string
+        annualRecurringRevenue:
+          type: number
+          format: double
+        lastTouch:
+          type: string
+          format: date-time
+    AccountDetail:
+      allOf:
+        - $ref: '#/components/schemas/AccountSummary'
+        - type: object
+          required: [history]
+          properties:
+            industry:
+              type: string
+            contacts:
+              type: array
+              items:
+                type: object
+                required: [name, role, email]
+                properties:
+                  name:
+                    type: string
+                  role:
+                    type: string
+                  email:
+                    type: string
+                  phone:
+                    type: string
+            history:
+              type: array
+              items:
+                $ref: '#/components/schemas/HistoryEntry'
+    HistoryEntry:
+      type: object
+      required: [id, timestamp, actorId, actionType]
+      properties:
+        id:
+          type: string
+          format: uuid
+        timestamp:
+          type: string
+          format: date-time
+        actorId:
+          type: string
+        actorName:
+          type: string
+        actionType:
+          type: string
+          enum: [StatusChanged, NoteAdded, MeetingLogged, AttachmentUploaded, ExportRequested, OwnershipChanged, Other]
+        statusBefore:
+          type: string
+          nullable: true
+        statusAfter:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        linkedOpportunityId:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+    StatusTransitionRequest:
+      type: object
+      required: [targetStatus, comment]
+      properties:
+        targetStatus:
+          type: string
+          enum: [Qualified, Proposal, Negotiation, ClosedWon, ClosedLost]
+        comment:
+          type: string
+          minLength: 5
+          maxLength: 1000
+    StatusTransitionResponse:
+      type: object
+      required: [account]
+      properties:
+        account:
+          $ref: '#/components/schemas/AccountDetail'
+        historyEntry:
+          $ref: '#/components/schemas/HistoryEntry'
+    ValidationError:
+      type: object
+      required: [message, code]
+      properties:
+        message:
+          type: string
+        code:
+          type: string
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              issue:
+                type: string
+    RateLimitError:
+      type: object
+      required: [message, retryAfterSeconds]
+      properties:
+        message:
+          type: string
+        retryAfterSeconds:
+          type: integer
+paths:
+  /accounts:
+    get:
+      summary: List accounts with filters
+      security:
+        - azureAd: []
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+        - in: query
+          name: ownerId
+          schema:
+            type: string
+        - in: query
+          name: region
+          schema:
+            type: string
+        - in: query
+          name: search
+          schema:
+            type: string
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - in: query
+          name: pageSize
+          schema:
+            type: integer
+            minimum: 10
+            maximum: 100
+            default: 25
+      responses:
+        '200':
+          description: Paged list of accounts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AccountSummary'
+                  total:
+                    type: integer
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateLimitError'
+  /accounts/{accountId}:
+    get:
+      summary: Retrieve account details and timeline
+      security:
+        - azureAd: []
+      parameters:
+        - in: path
+          name: accountId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Account detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountDetail'
+        '403':
+          description: Forbidden – user lacks access to account
+        '404':
+          description: Account not found
+  /accounts/{accountId}/status:
+    post:
+      summary: Transition account to next status
+      security:
+        - azureAd: []
+      parameters:
+        - in: path
+          name: accountId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StatusTransitionRequest'
+      responses:
+        '200':
+          description: Status updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusTransitionResponse'
+        '400':
+          description: Validation error (e.g., invalid transition, missing comment)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+        '409':
+          description: Conflict due to stale `_etag`
+        '429':
+          description: Operation queued because of throttling; client receives notification reference.
+  /accounts/{accountId}/history:
+    get:
+      summary: Fetch paginated account history
+      security:
+        - azureAd: []
+      parameters:
+        - in: path
+          name: accountId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - in: query
+          name: pageSize
+          schema:
+            type: integer
+            default: 50
+            maximum: 200
+        - in: query
+          name: actionType
+          schema:
+            type: string
+        - in: query
+          name: rangeStart
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: rangeEnd
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Paginated history entries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, hasMore]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/HistoryEntry'
+                  hasMore:
+                    type: boolean
+  /accounts/search:
+    get:
+      summary: Global search across accounts and history
+      security:
+        - azureAd: []
+      parameters:
+        - in: query
+          name: q
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: type
+          schema:
+            type: string
+            enum: [accounts, history, all]
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accounts:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AccountSummary'
+                  history:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/HistoryEntry'
+components:
+  responses:
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
